@@ -35,8 +35,7 @@ func main() {
 	accessSecret := flags.String("as", "", "Twitter Access Secret")
 	flags.Parse(os.Args[1:])
 	if *consumerKey == "" || *consumerSecret == "" || *accessToken == "" || *accessSecret == "" {
-		//log.Fatal("Consumer key/secret and Access token/secret required")
-		log.Println("skip flag check")
+		log.Fatal("Consumer key/secret and Access token/secret required")
 	}
 	config := oauth1.NewConfig(*consumerKey, *consumerSecret)
 	token := oauth1.NewToken(*accessToken, *accessSecret)
@@ -46,8 +45,9 @@ func main() {
 	fmt.Printf("New entries:     %d\n", len(newEntries))
 	Reverse(newEntries)
 	for _, entry := range newEntries {
-		fmt.Println(prefix + entry.Title + suffix + " " + entry.URL)
-		Tweet(config, token, entry.Title)
+		msg := prefix + entry.Title + suffix + " " + entry.URL
+		fmt.Println(msg)
+		Tweet(config, token, msg)
 	}
 	SaveTweeted(newEntries)
 }
