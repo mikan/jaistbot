@@ -2,13 +2,13 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-
-	"bufio"
 	"runtime"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/dghubble/go-twitter/twitter"
@@ -18,7 +18,8 @@ import (
 const logFile = ".jaistbot.log"
 const japanesePage = "https://www.jaist.ac.jp/whatsnew/"
 
-// const englishPage = "https://www.jaist.ac.jp/english/whatsnew/"
+//const englishPage = "https://www.jaist.ac.jp/english/whatsnew/"
+
 const prefix = "【ニュース】"
 const suffix = " #jaist"
 
@@ -33,7 +34,9 @@ func main() {
 	consumerSecret := flags.String("cs", "", "Twitter Consumer Secret")
 	accessToken := flags.String("at", "", "Twitter Access Token")
 	accessSecret := flags.String("as", "", "Twitter Access Secret")
-	flags.Parse(os.Args[1:])
+	if err := flags.Parse(os.Args[1:]); err != nil {
+		log.Fatal(err)
+	}
 	if *consumerKey == "" || *consumerSecret == "" || *accessToken == "" || *accessSecret == "" {
 		log.Fatal("Consumer key/secret and Access token/secret required")
 	}
@@ -55,7 +58,7 @@ func main() {
 func GetEntries(url string) []Entry {
 	doc, err := goquery.NewDocument(url)
 	if err != nil {
-		fmt.Errorf("%s: %v\n", url, err)
+		log.Printf("%s: %v\n", url, err)
 		return nil
 	}
 	entries := make([]Entry, 0)
@@ -77,16 +80,23 @@ func GetEntries(url string) []Entry {
 }
 
 func NotYetTweeted(fetched []Entry) []Entry {
-	_, err := os.Stat(UserHomeDir() + logFile)
+	logFilePath := UserHomeDir() + logFile
+	_, err := os.Stat(logFilePath)
 	if err != nil {
-		f, _ := os.Create(UserHomeDir() + logFile)
-		f.Close()
+		f, _ := os.Create(logFilePath)
+		if err := f.Close(); err != nil {
+			log.Printf("Failed to close %s: %v", logFilePath, err)
+		}
 	}
-	file, err := os.Open(UserHomeDir() + logFile)
+	file, err := os.Open(logFilePath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Fatalf("Failed to close %s: %v", logFilePath, err)
+		}
+	}()
 	scanner := bufio.NewScanner(file)
 	var lines []string
 	for scanner.Scan() {
@@ -116,20 +126,28 @@ func SaveTweeted(tweeted []Entry) {
 	for _, entry := range tweeted {
 		data = data + entry.URL + "\n"
 	}
-	f, err := os.OpenFile(UserHomeDir()+logFile, os.O_APPEND|os.O_WRONLY, 0644)
-	defer f.Close()
+	logFilePath := UserHomeDir() + logFile
+	f, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY, 0644)
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Fatalf("Failed to close %s: %v", logFilePath, err)
+		}
+	}()
 	if err != nil {
 		log.Fatal(err)
 	}
-	f.WriteString(data)
+	if _, err := f.WriteString(data); err != nil {
+		log.Fatalf("failed to write %s: %v", logFilePath, err)
+	}
 }
 
 func Tweet(config *oauth1.Config, token *oauth1.Token, status string) {
+	escaped := strings.ReplaceAll(status, "\"", "”")
 	httpClient := config.Client(oauth1.NoContext, token)
 	client := twitter.NewClient(httpClient)
-	tweet, _, err := client.Statuses.Update(status, nil)
+	tweet, _, err := client.Statuses.Update(escaped, nil)
 	if err != nil {
-		fmt.Errorf("Tweet error: %v\n", err)
+		log.Printf("Tweet error: %v\n", err)
 		return
 	}
 	fmt.Println(tweet)
