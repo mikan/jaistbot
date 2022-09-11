@@ -1,4 +1,4 @@
-// Copyright 2017 mikan.
+// Copyright 2017-2022 mikan.
 package main
 
 import (
@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"runtime"
 	"strings"
@@ -15,7 +16,7 @@ import (
 	"github.com/dghubble/oauth1"
 )
 
-const logFile = ".jaistbot.log"
+const saveFile = ".jaistbot.log"
 const japanesePage = "https://www.jaist.ac.jp/whatsnew/"
 
 //const englishPage = "https://www.jaist.ac.jp/english/whatsnew/"
@@ -29,34 +30,47 @@ type Entry struct {
 }
 
 func main() {
-	flags := flag.NewFlagSet("jaistbot", flag.ExitOnError)
-	consumerKey := flags.String("ck", "", "Twitter Consumer Key")
-	consumerSecret := flags.String("cs", "", "Twitter Consumer Secret")
-	accessToken := flags.String("at", "", "Twitter Access Token")
-	accessSecret := flags.String("as", "", "Twitter Access Secret")
-	if err := flags.Parse(os.Args[1:]); err != nil {
-		log.Fatal(err)
-	}
+	consumerKey := flag.String("ck", "", "Twitter Consumer Key")
+	consumerSecret := flag.String("cs", "", "Twitter Consumer Secret")
+	accessToken := flag.String("at", "", "Twitter Access Token")
+	accessSecret := flag.String("as", "", "Twitter Access Secret")
+	saveFilePath := flag.String("f", UserHomeDir()+saveFile, "path to save file")
+	dryRun := flag.Bool("d", false, "dry run")
+	flag.Parse()
 	if *consumerKey == "" || *consumerSecret == "" || *accessToken == "" || *accessSecret == "" {
 		log.Fatal("Consumer key/secret and Access token/secret required")
 	}
 	config := oauth1.NewConfig(*consumerKey, *consumerSecret)
 	token := oauth1.NewToken(*accessToken, *accessSecret)
-	fetched := GetEntries(japanesePage)
+	fetched := FetchEntries(japanesePage)
 	fmt.Printf("Fetched entries: %d\n", len(fetched))
-	newEntries := NotYetTweeted(fetched)
+	newEntries := NotYetTweeted(fetched, *saveFilePath)
 	fmt.Printf("New entries:     %d\n", len(newEntries))
 	Reverse(newEntries)
 	for _, entry := range newEntries {
 		msg := prefix + entry.Title + suffix + " " + entry.URL
 		fmt.Println(msg)
-		Tweet(config, token, msg)
+		if !*dryRun {
+			Tweet(config, token, msg)
+		}
 	}
-	SaveTweeted(newEntries)
+	SaveTweeted(newEntries, *saveFilePath)
 }
 
-func GetEntries(url string) []Entry {
-	doc, err := goquery.NewDocument(url)
+func FetchEntries(url string) []Entry {
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Fatalf("%s: %v\n", url, err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("failed to close %s: %v", url, err)
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		log.Fatalf("%s: HTTP %s", url, resp.Status)
+	}
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
 		log.Printf("%s: %v\n", url, err)
 		return nil
@@ -79,22 +93,21 @@ func GetEntries(url string) []Entry {
 	return entries
 }
 
-func NotYetTweeted(fetched []Entry) []Entry {
-	logFilePath := UserHomeDir() + logFile
-	_, err := os.Stat(logFilePath)
+func NotYetTweeted(fetched []Entry, path string) []Entry {
+	_, err := os.Stat(path)
 	if err != nil {
-		f, _ := os.Create(logFilePath)
+		f, _ := os.Create(path)
 		if err := f.Close(); err != nil {
-			log.Printf("Failed to close %s: %v", logFilePath, err)
+			log.Printf("Failed to close %s: %v", path, err)
 		}
 	}
-	file, err := os.Open(logFilePath)
+	file, err := os.Open(path)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			log.Fatalf("Failed to close %s: %v", logFilePath, err)
+			log.Fatalf("Failed to close %s: %v", path, err)
 		}
 	}()
 	scanner := bufio.NewScanner(file)
@@ -118,7 +131,7 @@ func NotYetTweeted(fetched []Entry) []Entry {
 	return notYetTweeted
 }
 
-func SaveTweeted(tweeted []Entry) {
+func SaveTweeted(tweeted []Entry, path string) {
 	if len(tweeted) == 0 {
 		return // skip
 	}
@@ -126,29 +139,28 @@ func SaveTweeted(tweeted []Entry) {
 	for _, entry := range tweeted {
 		data = data + entry.URL + "\n"
 	}
-	logFilePath := UserHomeDir() + logFile
-	f, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
 	defer func() {
 		if err := f.Close(); err != nil {
-			log.Fatalf("Failed to close %s: %v", logFilePath, err)
+			log.Fatalf("Failed to close %s: %v", path, err)
 		}
 	}()
 	if err != nil {
 		log.Fatal(err)
 	}
 	if _, err := f.WriteString(data); err != nil {
-		log.Fatalf("failed to write %s: %v", logFilePath, err)
+		log.Fatalf("failed to write %s: %v", path, err)
 	}
 }
 
 func Tweet(config *oauth1.Config, token *oauth1.Token, status string) {
 	escaped := strings.ReplaceAll(status, "\"", "”")
+	escaped = strings.ReplaceAll(escaped, "@", "@ ")
 	httpClient := config.Client(oauth1.NoContext, token)
 	client := twitter.NewClient(httpClient)
 	tweet, _, err := client.Statuses.Update(escaped, nil)
 	if err != nil {
-		log.Printf("Tweet error: %v\n", err)
-		return
+		log.Fatalf("Tweet error: %v\n", err)
 	}
 	fmt.Println(tweet)
 }
