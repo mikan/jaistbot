@@ -6,4 +6,12 @@ require (
 	github.com/dghubble/oauth1 v0.6.0
 )
 
-go 1.13
+require (
+	github.com/andybalholm/cascadia v1.0.0 // indirect
+	github.com/cenkalti/backoff v2.1.1+incompatible // indirect
+	github.com/dghubble/sling v1.3.0 // indirect
+	github.com/google/go-querystring v1.0.0 // indirect
+	golang.org/x/net v0.0.0-20181114220301-adae6a3d119a // indirect
+)
+
+go 1.19

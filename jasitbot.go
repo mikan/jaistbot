@@ -21,7 +21,7 @@ const japanesePage = "https://www.jaist.ac.jp/whatsnew/"
 //const englishPage = "https://www.jaist.ac.jp/english/whatsnew/"
 
 const prefix = "【ニュース】"
-const suffix = " #jaist"
+const suffix = " #JAIST"
 
 type Entry struct {
 	Title string
