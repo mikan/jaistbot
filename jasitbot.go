@@ -57,7 +57,7 @@ func main() {
 		if !*dryRun {
 			if err := Tweet(config, token, msg); err != nil {
 				if len(*webhook) > 0 {
-					if wErr := IncomingWebhook(*webhook, err); wErr != nil {
+					if wErr := IncomingWebhook(*webhook, msg, err); wErr != nil {
 						log.Fatalf("failed to post webhook: %v, original error: %v", wErr, err)
 					}
 				} else {
@@ -195,10 +195,10 @@ func UserHomeDir() string {
 	return os.Getenv("HOME") + "/"
 }
 
-func IncomingWebhook(url string, err error) error {
+func IncomingWebhook(url, msg string, err error) error {
 	payload, err := json.Marshal(struct {
 		Text string `json:"text"`
-	}{err.Error()})
+	}{fmt.Sprintf("Message:\n%s\nError:\n%v", msg, err)})
 	if err != nil {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
