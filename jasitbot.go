@@ -3,8 +3,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -35,6 +38,7 @@ func main() {
 	accessToken := flag.String("at", "", "Twitter Access Token")
 	accessSecret := flag.String("as", "", "Twitter Access Secret")
 	saveFilePath := flag.String("f", UserHomeDir()+saveFile, "path to save file")
+	webhook := flag.String("w", "", "webhook url for error notification")
 	dryRun := flag.Bool("d", false, "dry run")
 	flag.Parse()
 	if *consumerKey == "" || *consumerSecret == "" || *accessToken == "" || *accessSecret == "" {
@@ -51,7 +55,15 @@ func main() {
 		msg := prefix + entry.Title + suffix + " " + entry.URL
 		fmt.Println(msg)
 		if !*dryRun {
-			Tweet(config, token, msg)
+			if err := Tweet(config, token, msg); err != nil {
+				if len(*webhook) > 0 {
+					if wErr := IncomingWebhook(*webhook, err); wErr != nil {
+						log.Fatalf("failed to post webhook: %v, original error: %v", wErr, err)
+					}
+				} else {
+					log.Fatal(err)
+				}
+			}
 		}
 	}
 	SaveTweeted(newEntries, *saveFilePath)
@@ -153,16 +165,17 @@ func SaveTweeted(tweeted []Entry, path string) {
 	}
 }
 
-func Tweet(config *oauth1.Config, token *oauth1.Token, status string) {
+func Tweet(config *oauth1.Config, token *oauth1.Token, status string) error {
 	escaped := strings.ReplaceAll(status, "\"", "”")
 	escaped = strings.ReplaceAll(escaped, "@", "@ ")
 	httpClient := config.Client(oauth1.NoContext, token)
 	client := twitter.NewClient(httpClient)
 	tweet, _, err := client.Statuses.Update(escaped, nil)
 	if err != nil {
-		log.Fatalf("Tweet error: %v\n", err)
+		return fmt.Errorf("Tweet error: %w\n", err)
 	}
 	fmt.Println(tweet)
+	return nil
 }
 
 func Reverse(entries []Entry) {
@@ -180,4 +193,30 @@ func UserHomeDir() string {
 		return home + "\\"
 	}
 	return os.Getenv("HOME") + "/"
+}
+
+func IncomingWebhook(url string, err error) error {
+	payload, err := json.Marshal(struct {
+		Text string `json:"text"`
+	}{err.Error()})
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	resp, err := http.Post(url, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("failed to post webhook: %w", err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Fatalf("Failed to close webhook body: %v", err)
+		}
+	}()
+	result, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("webhook response: %s (status=%d)", string(result), resp.StatusCode)
+	}
+	return nil
 }
