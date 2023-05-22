@@ -60,9 +60,8 @@ func main() {
 					if wErr := IncomingWebhook(*webhook, msg, err); wErr != nil {
 						log.Fatalf("failed to post webhook: %v, original error: %v", wErr, err)
 					}
-				} else {
-					log.Fatal(err)
 				}
+				log.Fatal(err)
 			}
 		}
 	}
