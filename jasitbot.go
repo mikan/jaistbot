@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,8 +16,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/dghubble/go-twitter/twitter"
-	"github.com/dghubble/oauth1"
+	"github.com/g8rswimmer/go-twitter/v2"
 )
 
 const saveFile = ".jaistbot.log"
@@ -33,19 +33,14 @@ type Entry struct {
 }
 
 func main() {
-	consumerKey := flag.String("ck", "", "Twitter Consumer Key")
-	consumerSecret := flag.String("cs", "", "Twitter Consumer Secret")
-	accessToken := flag.String("at", "", "Twitter Access Token")
-	accessSecret := flag.String("as", "", "Twitter Access Secret")
+	apiToken := flag.String("t", "", "twitter api token")
 	saveFilePath := flag.String("f", UserHomeDir()+saveFile, "path to save file")
 	webhook := flag.String("w", "", "webhook url for error notification")
 	dryRun := flag.Bool("d", false, "dry run")
 	flag.Parse()
-	if *consumerKey == "" || *consumerSecret == "" || *accessToken == "" || *accessSecret == "" {
-		log.Fatal("Consumer key/secret and Access token/secret required")
+	if *apiToken == "" {
+		log.Fatal("API token (-t) is required")
 	}
-	config := oauth1.NewConfig(*consumerKey, *consumerSecret)
-	token := oauth1.NewToken(*accessToken, *accessSecret)
 	fetched := FetchEntries(japanesePage)
 	fmt.Printf("Fetched entries: %d\n", len(fetched))
 	newEntries := NotYetTweeted(fetched, *saveFilePath)
@@ -55,7 +50,7 @@ func main() {
 		msg := prefix + entry.Title + suffix + " " + entry.URL
 		fmt.Println(msg)
 		if !*dryRun {
-			if err := Tweet(config, token, msg); err != nil {
+			if err := Tweet(*apiToken, msg); err != nil {
 				if len(*webhook) > 0 {
 					if wErr := IncomingWebhook(*webhook, msg, err); wErr != nil {
 						log.Fatalf("failed to post webhook: %v, original error: %v", wErr, err)
@@ -164,16 +159,33 @@ func SaveTweeted(tweeted []Entry, path string) {
 	}
 }
 
-func Tweet(config *oauth1.Config, token *oauth1.Token, status string) error {
-	escaped := strings.ReplaceAll(status, "\"", "”")
-	escaped = strings.ReplaceAll(escaped, "@", "@ ")
-	httpClient := config.Client(oauth1.NoContext, token)
-	client := twitter.NewClient(httpClient)
-	tweet, _, err := client.Statuses.Update(escaped, nil)
+type authorize struct {
+	Token string
+}
+
+func (a authorize) Add(req *http.Request) {
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", a.Token))
+}
+
+func Tweet(token, text string) error {
+	text = strings.ReplaceAll(text, "\"", "”")
+	text = strings.ReplaceAll(text, "@", "@ ")
+	client := &twitter.Client{
+		Authorizer: authorize{Token: token},
+		Client:     http.DefaultClient,
+		Host:       "https://api.twitter.com",
+	}
+	req := twitter.CreateTweetRequest{Text: text}
+	fmt.Println("Callout to create tweet callout")
+	tweetResponse, err := client.CreateTweet(context.Background(), req)
 	if err != nil {
 		return fmt.Errorf("Tweet error: %w\n", err)
 	}
-	fmt.Println(tweet)
+	enc, err := json.MarshalIndent(tweetResponse, "", "    ")
+	if err != nil {
+		return fmt.Errorf("Failed to unmarshal Twitter response: %w\n", err)
+	}
+	fmt.Println(string(enc))
 	return nil
 }
 

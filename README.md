@@ -11,7 +11,7 @@ Libraries
 --------
 
 * [PuerkitoBio/goquery](https://github.com/PuerkitoBio/goquery)
-* [dghubble/go-twitter](https://github.com/dghubble/go-twitter)
+* [g8rswimmer/go-twitter](https://github.com/g8rswimmer/go-twitter)
 
 Author
 ------
