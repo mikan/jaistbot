@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,8 +16,8 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
+	"github.com/g8rswimmer/go-twitter/v2"
 )
 
 const saveFile = ".jaistbot.log"
@@ -164,16 +165,23 @@ func SaveTweeted(tweeted []Entry, path string) {
 	}
 }
 
+type dummyAuthorizer struct{ Token string }
+
+func (a dummyAuthorizer) Add(_ *http.Request) {}
+
 func Tweet(config *oauth1.Config, token *oauth1.Token, status string) error {
 	escaped := strings.ReplaceAll(status, "\"", "”")
 	escaped = strings.ReplaceAll(escaped, "@", "@ ")
-	httpClient := config.Client(oauth1.NoContext, token)
-	client := twitter.NewClient(httpClient)
-	tweet, _, err := client.Statuses.Update(escaped, nil)
+	client := &twitter.Client{
+		Authorizer: dummyAuthorizer{},
+		Client:     config.Client(oauth1.NoContext, token),
+		Host:       "https://api.twitter.com",
+	}
+	resp, err := client.CreateTweet(context.Background(), twitter.CreateTweetRequest{Text: escaped})
 	if err != nil {
 		return fmt.Errorf("Tweet error: %w\n", err)
 	}
-	fmt.Println(tweet)
+	log.Printf("Tweeted: %s (rate limit: %d/%d)", resp.Tweet.ID, resp.RateLimit.Remaining, resp.RateLimit.Limit)
 	return nil
 }
 
