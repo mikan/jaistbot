@@ -45,6 +45,8 @@ func main() {
 	if *consumerKey == "" || *consumerSecret == "" || *accessToken == "" || *accessSecret == "" {
 		log.Fatal("Consumer key/secret and Access token/secret required")
 	}
+	config := oauth1.NewConfig(*consumerKey, *consumerSecret)
+	token := oauth1.NewToken(*accessToken, *accessSecret)
 	fetched := FetchEntries(japanesePage)
 	fmt.Printf("Fetched entries: %d\n", len(fetched))
 	newEntries := NotYetTweeted(fetched, *saveFilePath)
@@ -54,7 +56,7 @@ func main() {
 		msg := prefix + entry.Title + suffix + " " + entry.URL
 		fmt.Println(msg)
 		if !*dryRun {
-			if err := Tweet(*consumerKey, *consumerSecret, *accessToken, *accessSecret, msg); err != nil {
+			if err := Tweet(config, token, msg); err != nil {
 				if len(*webhook) > 0 {
 					if wErr := IncomingWebhook(*webhook, msg, err); wErr != nil {
 						log.Fatalf("failed to post webhook: %v, original error: %v", wErr, err)
@@ -167,28 +169,19 @@ type dummyAuthorizer struct{ Token string }
 
 func (a dummyAuthorizer) Add(_ *http.Request) {}
 
-func Tweet(consumerKey, consumerSecret, accessToken, accessSecret, text string) error {
-	text = strings.ReplaceAll(text, "\"", "”")
-	text = strings.ReplaceAll(text, "@", "@ ")
+func Tweet(config *oauth1.Config, token *oauth1.Token, status string) error {
+	escaped := strings.ReplaceAll(status, "\"", "”")
+	escaped = strings.ReplaceAll(escaped, "@", "@ ")
 	client := &twitter.Client{
 		Authorizer: dummyAuthorizer{},
-		Client: oauth1.NewConfig(consumerKey, consumerSecret).Client(oauth1.NoContext, &oauth1.Token{
-			Token:       accessToken,
-			TokenSecret: accessSecret,
-		}),
-		Host: "https://api.twitter.com",
+		Client:     config.Client(oauth1.NoContext, token),
+		Host:       "https://api.twitter.com",
 	}
-	req := twitter.CreateTweetRequest{Text: text}
-	fmt.Println("Callout to create tweet callout")
-	tweetResponse, err := client.CreateTweet(context.Background(), req)
+	resp, err := client.CreateTweet(context.Background(), twitter.CreateTweetRequest{Text: escaped})
 	if err != nil {
 		return fmt.Errorf("Tweet error: %w\n", err)
 	}
-	enc, err := json.MarshalIndent(tweetResponse, "", "    ")
-	if err != nil {
-		return fmt.Errorf("Failed to unmarshal Twitter response: %w\n", err)
-	}
-	fmt.Println(string(enc))
+	log.Printf("Tweeted: %s (rate limit: %d/%d)", resp.Tweet.ID, resp.RateLimit.Remaining, resp.RateLimit.Limit)
 	return nil
 }
 
