@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/dghubble/oauth1"
 	"github.com/g8rswimmer/go-twitter/v2"
 )
 
@@ -33,13 +34,16 @@ type Entry struct {
 }
 
 func main() {
-	apiToken := flag.String("t", "", "twitter api token")
+	consumerKey := flag.String("ck", "", "Twitter Consumer Key")
+	consumerSecret := flag.String("cs", "", "Twitter Consumer Secret")
+	accessToken := flag.String("at", "", "Twitter Access Token")
+	accessSecret := flag.String("as", "", "Twitter Access Secret")
 	saveFilePath := flag.String("f", UserHomeDir()+saveFile, "path to save file")
 	webhook := flag.String("w", "", "webhook url for error notification")
 	dryRun := flag.Bool("d", false, "dry run")
 	flag.Parse()
-	if *apiToken == "" {
-		log.Fatal("API token (-t) is required")
+	if *consumerKey == "" || *consumerSecret == "" || *accessToken == "" || *accessSecret == "" {
+		log.Fatal("Consumer key/secret and Access token/secret required")
 	}
 	fetched := FetchEntries(japanesePage)
 	fmt.Printf("Fetched entries: %d\n", len(fetched))
@@ -50,7 +54,7 @@ func main() {
 		msg := prefix + entry.Title + suffix + " " + entry.URL
 		fmt.Println(msg)
 		if !*dryRun {
-			if err := Tweet(*apiToken, msg); err != nil {
+			if err := Tweet(*consumerKey, *consumerSecret, *accessToken, *accessSecret, msg); err != nil {
 				if len(*webhook) > 0 {
 					if wErr := IncomingWebhook(*webhook, msg, err); wErr != nil {
 						log.Fatalf("failed to post webhook: %v, original error: %v", wErr, err)
@@ -159,21 +163,20 @@ func SaveTweeted(tweeted []Entry, path string) {
 	}
 }
 
-type authorize struct {
-	Token string
-}
+type dummyAuthorizer struct{ Token string }
 
-func (a authorize) Add(req *http.Request) {
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", a.Token))
-}
+func (a dummyAuthorizer) Add(_ *http.Request) {}
 
-func Tweet(token, text string) error {
+func Tweet(consumerKey, consumerSecret, accessToken, accessSecret, text string) error {
 	text = strings.ReplaceAll(text, "\"", "”")
 	text = strings.ReplaceAll(text, "@", "@ ")
 	client := &twitter.Client{
-		Authorizer: authorize{Token: token},
-		Client:     http.DefaultClient,
-		Host:       "https://api.twitter.com",
+		Authorizer: dummyAuthorizer{},
+		Client: oauth1.NewConfig(consumerKey, consumerSecret).Client(oauth1.NoContext, &oauth1.Token{
+			Token:       accessToken,
+			TokenSecret: accessSecret,
+		}),
+		Host: "https://api.twitter.com",
 	}
 	req := twitter.CreateTweetRequest{Text: text}
 	fmt.Println("Callout to create tweet callout")
