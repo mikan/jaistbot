@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -129,14 +130,7 @@ func NotYetTweeted(fetched []Entry, path string) []Entry {
 	}
 	notYetTweeted := make([]Entry, 0)
 	for _, entry := range fetched {
-		tweeted := false
-		for _, line := range lines {
-			if entry.URL == line {
-				tweeted = true
-				break
-			}
-		}
-		if !tweeted {
+		if !slices.Contains(lines, entry.URL) {
 			notYetTweeted = append(notYetTweeted, entry)
 		}
 	}
