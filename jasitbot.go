@@ -197,9 +197,11 @@ func UserHomeDir() string {
 }
 
 func IncomingWebhook(url, msg string, err error) error {
+	text := fmt.Sprintf("Message:\n%s\nError:\n%v", msg, err)
 	payload, err := json.Marshal(struct {
-		Text string `json:"text"`
-	}{fmt.Sprintf("Message:\n%s\nError:\n%v", msg, err)})
+		Text    string `json:"text"`    // Slack
+		Content string `json:"content"` // Discord
+	}{Text: text, Content: text})
 	if err != nil {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
