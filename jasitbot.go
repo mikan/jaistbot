@@ -39,12 +39,20 @@ func main() {
 	consumerSecret := flag.String("cs", "", "Twitter Consumer Secret")
 	accessToken := flag.String("at", "", "Twitter Access Token")
 	accessSecret := flag.String("as", "", "Twitter Access Secret")
+	bufferAPIKey := flag.String("bk", "", "Buffer API Key")
+	bufferChannelID := flag.String("bc", "", "Buffer Channel ID")
 	saveFilePath := flag.String("f", UserHomeDir()+saveFile, "path to save file")
 	webhook := flag.String("w", "", "webhook url for error notification")
 	dryRun := flag.Bool("d", false, "dry run")
 	flag.Parse()
-	if *consumerKey == "" || *consumerSecret == "" || *accessToken == "" || *accessSecret == "" {
-		log.Fatal("Consumer key/secret and Access token/secret required")
+	if *consumerKey == "" && *bufferAPIKey == "" {
+		log.Fatal("Twitter credentials or Buffer API key is required")
+	}
+	if *consumerKey != "" && (*consumerSecret == "" || *accessToken == "" || *accessSecret == "") {
+		log.Fatal("Consumer key/secret and Access token/secret is required")
+	}
+	if *bufferAPIKey != "" && *bufferChannelID == "" {
+		log.Fatal("Buffer Channel ID is also required")
 	}
 	config := oauth1.NewConfig(*consumerKey, *consumerSecret)
 	token := oauth1.NewToken(*accessToken, *accessSecret)
@@ -55,9 +63,17 @@ func main() {
 	Reverse(newEntries)
 	for _, entry := range newEntries {
 		msg := prefix + entry.Title + suffix + " " + entry.URL
+		msg = strings.ReplaceAll(msg, "\"", "”")
+		msg = strings.ReplaceAll(msg, "@", "@ ")
 		fmt.Println(msg)
 		if !*dryRun {
-			if err := Tweet(config, token, msg); err != nil {
+			var err error
+			if *bufferAPIKey != "" {
+				err = BufferPost(*bufferAPIKey, *bufferChannelID, msg)
+			} else {
+				err = Tweet(config, token, msg)
+			}
+			if err != nil {
 				if len(*webhook) > 0 {
 					if wErr := IncomingWebhook(*webhook, msg, err); wErr != nil {
 						log.Fatalf("failed to post webhook: %v, original error: %v", wErr, err)
@@ -164,18 +180,96 @@ type dummyAuthorizer struct{ Token string }
 func (a dummyAuthorizer) Add(_ *http.Request) {}
 
 func Tweet(config *oauth1.Config, token *oauth1.Token, status string) error {
-	escaped := strings.ReplaceAll(status, "\"", "”")
-	escaped = strings.ReplaceAll(escaped, "@", "@ ")
 	client := &twitter.Client{
 		Authorizer: dummyAuthorizer{},
 		Client:     config.Client(oauth1.NoContext, token),
 		Host:       "https://api.twitter.com",
 	}
-	resp, err := client.CreateTweet(context.Background(), twitter.CreateTweetRequest{Text: escaped})
+	resp, err := client.CreateTweet(context.Background(), twitter.CreateTweetRequest{Text: status})
 	if err != nil {
 		return fmt.Errorf("Tweet error: %w\n", err)
 	}
 	log.Printf("Tweeted: %s (rate limit: %d/%d)", resp.Tweet.ID, resp.RateLimit.Remaining, resp.RateLimit.Limit)
+	return nil
+}
+
+func BufferPost(key string, cid string, status string) error {
+	const query = `mutation CreatePost($input: CreatePostInput!) {
+		createPost(input: $input) {
+			... on PostActionSuccess { post { id text status } }
+			... on MutationError { message }
+		}
+	}`
+	var payload struct {
+		Query     string `json:"query"`
+		Variables struct {
+			Input struct {
+				Text           string `json:"text"`
+				ChannelID      string `json:"channelId"`
+				SchedulingType string `json:"schedulingType"`
+				Mode           string `json:"mode"`
+			} `json:"input"`
+		} `json:"variables"`
+	}
+	payload.Query = query
+	payload.Variables.Input.Text = status
+	payload.Variables.Input.ChannelID = cid
+	payload.Variables.Input.SchedulingType = "automatic"
+	payload.Variables.Input.Mode = "shareNow"
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, "https://api.buffer.com", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("BufferPost error: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Fatalf("Failed to close Buffer response body: %v", err)
+		}
+	}()
+	result, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read Buffer response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("BufferPost error: %s (status=%d)", string(result), resp.StatusCode)
+	}
+	var parsed struct {
+		Data struct {
+			CreatePost struct {
+				Post *struct {
+					ID     string `json:"id"`
+					Status string `json:"status"`
+				} `json:"post"`
+				Message string `json:"message"`
+			} `json:"createPost"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		return fmt.Errorf("failed to unmarshal Buffer response: %w (body: %s)", err, string(result))
+	}
+	if len(parsed.Errors) > 0 {
+		return fmt.Errorf("BufferPost error: %s", parsed.Errors[0].Message)
+	}
+	if parsed.Data.CreatePost.Message != "" {
+		return fmt.Errorf("BufferPost error: %s", parsed.Data.CreatePost.Message)
+	}
+	post := parsed.Data.CreatePost.Post
+	if post == nil {
+		return fmt.Errorf("BufferPost error: no post in response (body: %s)", string(result))
+	}
+	log.Printf("Posted via Buffer: %s (status: %s)", post.ID, post.Status)
 	return nil
 }
 
